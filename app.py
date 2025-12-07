@@ -3,8 +3,7 @@ import pandas as pd
 import random
 
 # --- CONFIGURATION ---
-# ⚠️ REMPLACEZ CE LIEN PAR LE VÔTRE
-CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT..../pub?output=csv"
+CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRS_LmTrrujM8a8RnMG4O0__lGPpl459PWmAulQLCCgoS01IZdgOQqGQblLmTqgrzumNCSfCI4zIetw/pub?gid=2493091&single=true&output=csv"
 
 st.set_page_config(page_title="Mon Menu Semainier", page_icon="🍳", layout="wide")
 
