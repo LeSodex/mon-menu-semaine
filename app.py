@@ -124,4 +124,103 @@ st.title("🍳 Planificateur Avancé")
 
 col_top1, col_top2 = st.columns([3, 1])
 with col_top1:
-    st.caption("Favoris = 3x plus de chances • Gestion Midi/Soir • Liste
+    st.caption("Favoris = 3x plus de chances • Gestion Midi/Soir • Liste de courses")
+with col_top2:
+    # Bouton Reset avec Callback
+    st.button("🎲 Tout régénérer", type="primary", on_click=reset_week_callback)
+
+st.markdown("---")
+
+# --- BOUCLE D'AFFICHAGE ---
+for day in DAYS:
+    st.markdown(f"<div class='day-header'>{day}</div>", unsafe_allow_html=True)
+    cols = st.columns(2)
+    
+    for i, moment in enumerate(MOMENTS):
+        with cols[i]:
+            slot_key = f"{day}_{moment}"
+            sb_key = f"select_{slot_key}" # Clé unique pour le menu déroulant
+            slot_data = st.session_state['planning'][day][moment]
+            
+            # 1. Checkbox activation
+            is_active = st.checkbox(f"{moment}", value=slot_data['active'], key=f"check_{slot_key}")
+            
+            # Gestion du changement d'état (Cocher/Décocher)
+            if is_active != slot_data['active']:
+                st.session_state['planning'][day][moment]['active'] = is_active
+                if is_active and slot_data['recipe_id'] is None:
+                    # Si on active et que c'est vide, on remplit et on nettoie le widget pour qu'il prenne la nouvelle valeur
+                    fill_empty_slots()
+                    if sb_key in st.session_state: del st.session_state[sb_key]
+                st.rerun()
+
+            if is_active:
+                current_id = slot_data['recipe_id']
+                
+                # Initialisation de la clé du widget si nécessaire
+                if sb_key not in st.session_state and current_id is not None:
+                    st.session_state[sb_key] = current_id
+
+                # 2. Sélecteur de recette (Recherche manuelle)
+                options = df.index.tolist()
+                format_func = lambda x: df.iloc[x]['Nom']
+                
+                selected_id = st.selectbox(
+                    "Choisir une recette :",
+                    options,
+                    format_func=format_func,
+                    key=sb_key,
+                    label_visibility="collapsed"
+                )
+                
+                # Sauvegarde du choix manuel
+                if selected_id != current_id:
+                    st.session_state['planning'][day][moment]['recipe_id'] = selected_id
+                    st.rerun()
+
+                # 3. Affichage Détails Recette & Bouton Aléatoire
+                if selected_id is not None:
+                    row = df.iloc[selected_id]
+                    temps = str(row['Temps']).strip()
+                    fav = "★" if str(row['Favori']).lower() in ['true', 'vrai', '1', 'oui'] else ""
+                    color_class = f"badge-{temps}" if temps in ['Rapide', 'Moyen', 'Long'] else "badge-Moyen"
+
+                    st.markdown(
+                        f"**{fav} {row['Nom']}** <span class='badge {color_class}'>{temps}</span>", 
+                        unsafe_allow_html=True
+                    )
+                    
+                    # 4. Bouton Relancer individuel AVEC CALLBACK (Le correctif principal)
+                    st.button(
+                        "🔄 Aléatoire", 
+                        key=f"reroll_{slot_key}",
+                        on_click=reroll_callback,  # On appelle la fonction définie plus haut
+                        args=(day, moment, sb_key) # On lui passe les arguments
+                    )
+
+                    with st.expander("Ingrédients & Recette"):
+                        st.write(f"_{row['Ingredients']}_")
+                        st.caption(row['Instructions'])
+            else:
+                st.caption(f"Pas de repas prévu le {day.lower()} {moment.lower()}.")
+
+# --- LISTE DE COURSES ---
+st.markdown("---")
+st.header("🛒 Liste de Courses")
+
+ingredients_list = []
+for day in DAYS:
+    for moment in MOMENTS:
+        slot = st.session_state['planning'][day][moment]
+        if slot['active'] and slot['recipe_id'] is not None:
+            nom_recette = df.iloc[slot['recipe_id']]['Nom']
+            ingr_text = df.iloc[slot['recipe_id']]['Ingredients']
+            ingredients_list.append(f"**{nom_recette}** : {ingr_text}")
+
+if ingredients_list:
+    st.markdown('<div class="ingredient-list">', unsafe_allow_html=True)
+    for line in ingredients_list:
+        st.markdown(f"- {line}")
+    st.markdown('</div>', unsafe_allow_html=True)
+else:
+    st.info("Aucun repas planifié.")
