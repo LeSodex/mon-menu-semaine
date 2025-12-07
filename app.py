@@ -7,6 +7,10 @@ CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRS_LmTrrujM8a8RnMG4O
 
 st.set_page_config(page_title="Mon Menu Semainier", page_icon="🍳", layout="wide")
 
+# --- CONSTANTES ---
+DAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+MOMENTS = ["Midi", "Soir"]
+
 # --- STYLE CSS ---
 st.markdown('''
 <style>
@@ -44,32 +48,58 @@ def get_weighted_recipe_index(df, exclude=[]):
         k=1
     )[0]
 
-# --- CHARGEMENT ---
+# --- CHARGEMENT DES DONNÉES ---
 df = load_data()
 
 if df is None:
     st.error("⚠️ Impossible de lire le fichier Google Sheet.")
     st.stop()
 
-# --- INITIALISATION SESSION ---
-DAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
-MOMENTS = ["Midi", "Soir"]
+# --- CALLBACKS (C'est ici que la magie opère pour éviter le bug) ---
+def reroll_callback(day, moment, widget_key):
+    """Fonction appelée AVANT le rechargement de la page quand on clique sur le bouton"""
+    # 1. Identifier les recettes déjà utilisées ailleurs pour éviter les doublons
+    used_indices = []
+    for d in DAYS:
+        for m in MOMENTS:
+            # On n'exclut pas le créneau actuel qu'on est en train de changer
+            if not (d == day and m == moment):
+                rid = st.session_state['planning'][d][m]['recipe_id']
+                if rid is not None:
+                    used_indices.append(rid)
+    
+    # 2. Tirer une nouvelle recette
+    new_idx = get_weighted_recipe_index(df, exclude=used_indices)
+    
+    # 3. Mettre à jour le planning ET le widget selectbox
+    if new_idx is not None:
+        st.session_state['planning'][day][moment]['recipe_id'] = new_idx
+        st.session_state[widget_key] = new_idx
 
-# Structure de données principale
-if 'planning' not in st.session_state:
+def reset_week_callback():
+    """Réinitialise tout"""
     st.session_state['planning'] = {}
     for day in DAYS:
         st.session_state['planning'][day] = {}
         for moment in MOMENTS:
-            # Règle : Semaine = Soir uniquement / Weekend = Midi + Soir
             is_weekend = day in ["Samedi", "Dimanche"]
             active = True if (is_weekend or moment == "Soir") else False
             st.session_state['planning'][day][moment] = {'active': active, 'recipe_id': None}
+    
+    # Nettoyage des clés de widgets pour forcer le rafraîchissement
+    keys_to_remove = [k for k in st.session_state.keys() if k.startswith("select_")]
+    for k in keys_to_remove:
+        del st.session_state[k]
 
-# Fonction pour remplir les trous (Initialisation)
+# --- INITIALISATION SESSION ---
+if 'planning' not in st.session_state:
+    # On utilise le callback de reset pour initialiser la première fois
+    reset_week_callback()
+
+# Fonction pour remplir les trous (Initialisation auto)
 def fill_empty_slots():
     used_indices = []
-    # 1. Lister les recettes déjà placées pour éviter doublons
+    # 1. Lister les recettes déjà placées
     for d in DAYS:
         for m in MOMENTS:
             rid = st.session_state['planning'][d][m]['recipe_id']
@@ -86,7 +116,7 @@ def fill_empty_slots():
                     slot['recipe_id'] = new_idx
                     used_indices.append(new_idx)
 
-# Premier remplissage
+# Premier remplissage au chargement
 fill_empty_slots()
 
 # --- INTERFACE ---
@@ -94,123 +124,4 @@ st.title("🍳 Planificateur Avancé")
 
 col_top1, col_top2 = st.columns([3, 1])
 with col_top1:
-    st.caption("Favoris = 3x plus de chances • Gestion Midi/Soir • Liste de courses")
-with col_top2:
-    if st.button("🎲 Tout régénérer", type="primary"):
-        # Reset total
-        st.session_state['planning'] = {}
-        for day in DAYS:
-            st.session_state['planning'][day] = {}
-            for moment in MOMENTS:
-                is_weekend = day in ["Samedi", "Dimanche"]
-                active = True if (is_weekend or moment == "Soir") else False
-                st.session_state['planning'][day][moment] = {'active': active, 'recipe_id': None}
-        
-        # On vide aussi les clés des widgets selectbox pour forcer le refresh
-        keys_to_remove = [k for k in st.session_state.keys() if k.startswith("select_")]
-        for k in keys_to_remove:
-            del st.session_state[k]
-            
-        fill_empty_slots()
-        st.rerun()
-
-st.markdown("---")
-
-# --- BOUCLE D'AFFICHAGE ---
-for day in DAYS:
-    st.markdown(f"<div class='day-header'>{day}</div>", unsafe_allow_html=True)
-    cols = st.columns(2)
-    
-    for i, moment in enumerate(MOMENTS):
-        with cols[i]:
-            slot_key = f"{day}_{moment}"
-            sb_key = f"select_{slot_key}" # Clé unique pour le menu déroulant
-            slot_data = st.session_state['planning'][day][moment]
-            
-            # 1. Checkbox activation
-            is_active = st.checkbox(f"{moment}", value=slot_data['active'], key=f"check_{slot_key}")
-            
-            if is_active != slot_data['active']:
-                st.session_state['planning'][day][moment]['active'] = is_active
-                if is_active and slot_data['recipe_id'] is None:
-                    fill_empty_slots()
-                    # On force la mise à jour du widget selectbox s'il existe
-                    if sb_key in st.session_state:
-                         del st.session_state[sb_key]
-                st.rerun()
-
-            if is_active:
-                current_id = slot_data['recipe_id']
-                
-                # IMPORTANT : On initialise le widget avec la valeur du planning s'il n'est pas encore défini
-                # C'est ce qui permet au widget de suivre le tirage aléatoire
-                if sb_key not in st.session_state and current_id is not None:
-                    st.session_state[sb_key] = current_id
-
-                # 2. Sélecteur de recette (Recherche manuelle)
-                options = df.index.tolist()
-                format_func = lambda x: df.iloc[x]['Nom']
-                
-                # Le selectbox affiche ce qu'il y a dans st.session_state[sb_key]
-                selected_id = st.selectbox(
-                    "Choisir une recette :",
-                    options,
-                    format_func=format_func,
-                    key=sb_key,
-                    label_visibility="collapsed"
-                )
-                
-                # Si l'utilisateur change manuellement le selectbox
-                if selected_id != current_id:
-                    st.session_state['planning'][day][moment]['recipe_id'] = selected_id
-                    st.rerun()
-
-                # 3. Affichage Détails Recette
-                if selected_id is not None:
-                    row = df.iloc[selected_id]
-                    temps = str(row['Temps']).strip()
-                    fav = "★" if str(row['Favori']).lower() in ['true', 'vrai', '1', 'oui'] else ""
-                    color_class = f"badge-{temps}" if temps in ['Rapide', 'Moyen', 'Long'] else "badge-Moyen"
-
-                    st.markdown(
-                        f"**{fav} {row['Nom']}** <span class='badge {color_class}'>{temps}</span>", 
-                        unsafe_allow_html=True
-                    )
-                    
-                    # 4. Bouton Relancer individuel
-                    if st.button("🔄 Aléatoire", key=f"reroll_{slot_key}"):
-                        # Liste des IDs exclus (ceux déjà utilisés ailleurs)
-                        all_ids = []
-                        for d in DAYS:
-                            for m in MOMENTS:
-                                # On exclut tout sauf le slot actuel qu'on est en train de changer
-                                if not (d == day and m == moment):
-                                    pid = st.session_state['planning'][d][m]['recipe_id']
-                                    if pid is not None: all_ids.append(pid)
-                        
-                        new_idx = get_weighted_recipe_index(df, exclude=all_ids)
-                        
-                        if new_idx is not None:
-                            # Mise à jour de la donnée
-                            st.session_state['planning'][day][moment]['recipe_id'] = new_idx
-                            # CORRECTION ICI : On force aussi la mise à jour du widget selectbox
-                            st.session_state[sb_key] = new_idx
-                            st.rerun()
-
-                    with st.expander("Ingrédients & Recette"):
-                        st.write(f"_{row['Ingredients']}_")
-                        st.caption(row['Instructions'])
-            else:
-                st.caption(f"Pas de repas prévu le {day.lower()} {moment.lower()}.")
-
-# --- LISTE DE COURSES ---
-st.markdown("---")
-st.header("🛒 Liste de Courses")
-
-ingredients_list = []
-for day in DAYS:
-    for moment in MOMENTS:
-        slot = st.session_state['planning'][day][moment]
-        if slot['active'] and slot['recipe_id'] is not None:
-            nom_recette = df.iloc[slot['recipe_id']]['Nom']
-            ingr_text = df.iloc
+    st.caption("Favoris = 3x plus de chances • Gestion Midi/Soir • Liste
